@@ -1,17 +1,17 @@
-import { kv } from '@vercel/kv';
+import { sql } from '@vercel/postgres';
 import axios from 'axios';
 
-// Вспомогательная функция для отправки сообщений в Telegram
+// =================================================================
+//                 ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+// =================================================================
+
 async function sendTelegramMessage(chatId, text) {
   const url = `https://api.telegram.org/bot${process.env.BOT_TOKEN}/sendMessage`;
   try {
     await axios.post(url, { chat_id: String(chatId), text: text, parse_mode: 'HTML' });
-  } catch (error) {
-    console.error('Ошибка отправки в Telegram:', error.message);
-  }
+  } catch (error) { console.error('Ошибка отправки в Telegram:', error.message); }
 }
 
-// Вспомогательная функция для сохранения данных через Apps Script
 async function saveToSheet(data) {
   try {
     await axios.post(process.env.APPS_SCRIPT_URL, data, {
@@ -25,7 +25,10 @@ async function saveToSheet(data) {
   }
 }
 
-// Основной обработчик вебхука
+
+// =================================================================
+//                 ОСНОВНОЙ ОБРАБОТЧИК WEBHOOK
+// =================================================================
 export default async function handler(request, response) {
   if (request.method !== 'POST') return response.status(405).send('Method Not Allowed');
 
@@ -37,28 +40,41 @@ export default async function handler(request, response) {
     const chatId = message.chat.id.toString();
     const text = message.text.trim();
 
-    const stateKey = `state:${chatId}`;
-    const nameKey = `name:${chatId}`;
-    const currentStatus = await kv.get(stateKey);
+    // Получаем текущее состояние пользователя из Postgres
+    let userState = null;
+    const { rows } = await sql`SELECT state, user_name FROM user_states WHERE chat_id = ${chatId};`;
+    if (rows.length > 0) {
+      userState = { state: rows[0].state, name: rows[0].user_name };
+    }
+    const currentStatus = userState ? userState.state : null;
 
     if (text === '/reset') {
-      await kv.del(stateKey, nameKey);
+      await sql`DELETE FROM user_states WHERE chat_id = ${chatId};`;
       await sendTelegramMessage(chatId, 'Состояние сброшено. Начните с /start');
     } 
     else if (text.startsWith('/start')) {
-      await kv.del(stateKey, nameKey);
+      // Создаем или обновляем запись пользователя, сбрасывая состояние
+      await sql`
+        INSERT INTO user_states (chat_id, state, user_name) 
+        VALUES (${chatId}, 'waiting_for_name', NULL)
+        ON CONFLICT (chat_id) 
+        DO UPDATE SET state = 'waiting_for_name', user_name = NULL, updated_at = NOW();
+      `;
       await sendTelegramMessage(chatId, `🚀 Добро пожаловать!\n\nВведите ваше имя:`);
-      await kv.set(stateKey, 'waiting_for_name');
     } 
     else if (currentStatus === 'waiting_for_name') {
-      await kv.set(nameKey, text);
+      // Обновляем запись пользователя, добавляя имя и меняя состояние
+      await sql`
+        UPDATE user_states 
+        SET user_name = ${text}, state = 'waiting_for_email', updated_at = NOW() 
+        WHERE chat_id = ${chatId};
+      `;
       await sendTelegramMessage(chatId, 'Отлично! Теперь введите ваш email:');
-      await kv.set(stateKey, 'waiting_for_email');
     } 
     else if (currentStatus === 'waiting_for_email') {
-      const name = await kv.get(nameKey);
+      const name = userState ? userState.name : null;
       if (!name) {
-        await kv.del(stateKey);
+        await sql`DELETE FROM user_states WHERE chat_id = ${chatId};`;
         return await sendTelegramMessage(chatId, 'Ошибка, имя не найдено. Начните с /start');
       }
       
@@ -71,7 +87,8 @@ export default async function handler(request, response) {
       } else {
         await sendTelegramMessage(chatId, 'Произошла ошибка при сохранении заявки.');
       }
-      await kv.del(stateKey, nameKey);
+      // Удаляем запись о состоянии после успешного диалога
+      await sql`DELETE FROM user_states WHERE chat_id = ${chatId};`;
     } 
     else {
       await sendTelegramMessage(chatId, 'Отправьте /start для начала.');

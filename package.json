@@ -1,9 +1,9 @@
 {
-  "name": "telegram-bot-vercel",
+  "name": "telegram-bot-vercel-postgres",
   "version": "1.0.0",
   "type": "module",
   "dependencies": {
-    "@vercel/kv": "^1.0.1",
+    "@vercel/postgres": "^0.8.0",
     "axios": "^1.6.8"
   },
   "engines": {
