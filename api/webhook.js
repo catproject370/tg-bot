@@ -15,35 +15,30 @@ async function sendTelegramMessage(chatId, text) {
   } catch (error) { console.error('Ошибка отправки в Telegram:', error.message); }
 }
 
-// --- ИСПРАВЛЕННАЯ ФУНКЦИЯ СОХРАНЕНИЯ ---
+// --- ИЗМЕНЕННАЯ ФУНКЦИЯ СОХРАНЕНИЯ ---
 async function saveToSheet(data) {
   try {
     const appsScriptUrl = process.env.APPS_SCRIPT_URL;
     const secret = process.env.APPS_SCRIPT_SECRET;
 
-    // Отправляем запрос и ждем ответа
-    const response = await axios.post(appsScriptUrl, data, {
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${secret}`
-      },
-      timeout: 10000 // Ждать ответа не более 10 секунд
-    });
+    // Создаем новый "пакет" данных, который включает и секрет, и данные пользователя
+    const payload = {
+      secret: secret,
+      data: data
+    };
 
-    // Проверяем, что и HTTP статус, и ответ от скрипта говорят об успехе
+    // Отправляем этот пакет. Заголовки больше не нужны.
+    const response = await axios.post(appsScriptUrl, payload, { timeout: 10000 });
+
     if (response.status === 200 && response.data.status === 'ok') {
-      console.log("Данные успешно сохранены в Google Sheets.");
-      return true; // Возвращаем успех, только если все действительно хорошо
+      return true;
     } else {
-      // Если ответ странный, считаем это ошибкой
-      throw new Error(`Неожиданный ответ от Apps Script: ${JSON.stringify(response.data)}`);
+      throw new Error(`Unexpected response from Apps Script: ${JSON.stringify(response.data)}`);
     }
-
   } catch (error) {
-    // Теперь мы будем видеть подробные ошибки в логах Vercel
     console.error('Ошибка сохранения в Google Sheets:', error.response ? error.response.data : error.message);
     await sendTelegramMessage(process.env.DEV_CHAT_ID, `🚨 Ошибка сохранения в Google Sheets: ${error.message}`);
-    return false; // Возвращаем неудачу
+    return false;
   }
 }
 
@@ -105,3 +100,4 @@ export default async function handler(request, response) {
     return response.status(200).send('OK');
   }
 }
+
